@@ -44,7 +44,7 @@ An explicit empty `[tunnels]` table is valid and declares that no managed tunnel
 
 ## Reconciliation model
 
-The controller runs an immediate reconciliation on startup, followed by periodic reconciliation. Each pass reads a fresh snapshot of the configuration. A pass does not overlap another pass from the same process.
+The controller runs an immediate reconciliation on startup, followed by periodic reconciliation: the next pass starts 180 seconds after the previous one finished. Each pass reads a fresh snapshot of the configuration. A pass does not overlap another pass from the same process.
 
 ```text
 Read configuration -> Validate entire configuration
@@ -121,9 +121,9 @@ A single tunnel's runtime failure should not prevent reconciliation of unrelated
 
 `run` starts the controller in the foreground. `validate` performs offline configuration validation and exits successfully only for a valid configuration. Both accept `--config <PATH>`, with the system configuration path as the default. Standard help and version flags are provided. Invoking the executable without a subcommand must not change kernel state.
 
-The process is managed by systemd in a packaged installation. It does not daemonize itself or maintain a PID file. Termination stops reconciliation without tearing down managed interfaces. Restarting the controller observes and reconciles the existing interfaces. An enabled service recreates them after a host reboot.
+The process is managed by systemd in a packaged installation. It does not daemonize itself or maintain a PID file. Termination stops reconciliation without tearing down managed interfaces. On `SIGTERM` or `SIGINT`, a pass in progress is completed before the process exits, so that the controller does not leave a half-created interface behind. Restarting the controller observes and reconciles the existing interfaces. An enabled service recreates them after a host reboot.
 
-Transient runtime failures are logged and retried. The service must not require network readiness at startup to remain alive. Logs are emitted to standard output/error and collected by journald under systemd. State changes and failures are logged; unchanged reconciliations need not produce informational logs.
+Transient runtime failures are logged and retried. The service must not require network readiness at startup to remain alive. Logs are emitted to standard output/error and collected by journald under systemd. When standard error is the journal stream (`JOURNAL_STREAM`), each line starts with its syslog priority (`<3>` for errors, `<4>` for warnings, `<6>` for information) and carries no timestamp of its own. State changes and failures are logged; unchanged reconciliations need not produce informational logs.
 
 Only one controller should manage a network namespace. Run with the privileges necessary for Netlink configuration (typically `CAP_NET_ADMIN`) and restrict unrelated privileges where practical. Other network managers must not configure the same interfaces. The controller must not rewrite their configuration automatically.
 

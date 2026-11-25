@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use gre_controller::config;
+use gre_controller::{config, logging, run};
 
 /// A declarative GRE tunnel controller for Linux.
 #[derive(Debug, Parser)]
@@ -20,12 +20,36 @@ struct Cli {
 enum Command {
     /// Validate the configuration without modifying the kernel or performing DNS lookups.
     Validate,
+    /// Reconcile the kernel with the configuration until stopped with SIGTERM or SIGINT.
+    Run,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Validate => validate(&cli.config),
+        Command::Run => run(&cli.config),
+    }
+}
+
+fn run(path: &Path) -> ExitCode {
+    logging::init();
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            tracing::error!("cannot start the async runtime: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match runtime.block_on(run::run(path)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            tracing::error!("{err}");
+            ExitCode::FAILURE
+        }
     }
 }
 
