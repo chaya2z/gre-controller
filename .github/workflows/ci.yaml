@@ -23,3 +23,16 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+
+  netns:
+    # Privileged integration tests (tests/netns.rs) in a dedicated network namespace.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Show kernel
+        run: uname -r
+      - run: scripts/netns-test.sh
