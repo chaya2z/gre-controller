@@ -158,3 +158,7 @@ An existing GRE interface does not imply that the remote endpoint is reachable o
 ## Design
 
 See [Design and reconciliation](docs/design.md) for the management model, DNS behavior, ownership, failure handling, and service lifecycle.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.

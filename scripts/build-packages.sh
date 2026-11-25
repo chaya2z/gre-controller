@@ -32,7 +32,7 @@ root="$staging/gre-controller-$version"
 mkdir -p "$root"
 install -m 0755 "$binary" "$root/gre-controller"
 install -m 0644 packaging/gre-controller.service packaging/config.toml \
-    README.md docs/design.md "$root/"
+    README.md docs/design.md LICENSE-MIT LICENSE-APACHE "$root/"
 tar -C "$staging" --owner=0 --group=0 --numeric-owner \
     -czf "dist/gre-controller-$version-$machine-linux-gnu.tar.gz" \
     "gre-controller-$version"
