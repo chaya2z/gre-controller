@@ -14,17 +14,23 @@ fail() {
 
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
 machine=$(uname -m)
-case "$machine" in
-    x86_64) deb_arch=amd64 ;;
-    aarch64) deb_arch=arm64 ;;
-    *) fail "unsupported architecture: $machine" ;;
-esac
-deb="dist/gre-controller_${version}_${deb_arch}.deb"
-rpm="dist/gre-controller-${version}-1.${machine}.rpm"
+
+# Use the package files nfpm wrote instead of predicting their names: nfpm turns a
+# prerelease such as 0.1.0-rc.1 into 0.1.0~rc.1. Exactly one of each must exist.
+only() {
+    local files
+    shopt -s nullglob
+    # shellcheck disable=SC2206 # The pattern is meant to be expanded.
+    files=(dist/$1)
+    shopt -u nullglob
+    ((${#files[@]} == 1)) ||
+        fail "expected exactly one dist/$1, found ${#files[@]}: ${files[*]}"
+    printf '%s\n' "${files[0]}"
+}
+deb=$(only '*.deb')
+rpm=$(only '*.rpm')
 archive="dist/gre-controller-$version-$machine-linux-gnu.tar.gz"
-for file in "$deb" "$rpm" "$archive"; do
-    [[ -f $file ]] || fail "missing $file"
-done
+[[ -f $archive ]] || fail "missing $archive"
 if dpkg-query -W gre-controller >/dev/null 2>&1; then
     fail "gre-controller is already installed here; refusing to touch it"
 fi

@@ -61,8 +61,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A semver prerelease (v0.1.0-rc.1) is published as a GitHub prerelease. Build
+          # metadata after "+" may contain "-" too, so it is removed first.
+          prerelease=()
+          version=${GITHUB_REF_NAME%%+*}
+          if [[ $version == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          # --verify-tag: fail instead of creating the tag if it does not exist.
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
-            --draft
+            --verify-tag \
+            --draft \
+            "${prerelease[@]}"
