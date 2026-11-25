@@ -22,7 +22,7 @@ The controller manages GRE interfaces and their overlay IP addresses. It does no
 
 ## Requirements
 
-- Linux with kernel support for GRE and/or IPv6 GRE.
+- Linux 5.18 or later, with kernel support for GRE and/or IPv6 GRE. The controller relies on the address protocol attribute (`IFA_PROTO`) added in 5.18 to recognize its own addresses.
 - Ubuntu or Fedora (supported release versions will be documented after testing).
 - Network administration privileges for running the controller.
 - Reachable underlay endpoints and working name resolution when DNS names are used.

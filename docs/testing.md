@@ -25,6 +25,6 @@ The script:
 
 Each test checks that it runs in the namespace the script created and fails otherwise, so `cargo test -- --ignored` on its own cannot change the host's network. Extra arguments go to the test binary, for example a test name filter: `scripts/netns-test.sh observes_owned_gre`.
 
-Requirements: iproute2, `sudo`, and a kernel with GRE, IPv6 GRE, and veth support. CI runs the same script on a GitHub-hosted Ubuntu runner.
+Requirements: iproute2 with support for `ip address add ... proto`, `sudo`, and Linux 5.18 or later with GRE, IPv6 GRE, and veth support. CI runs the same script on a GitHub-hosted Ubuntu runner.
 
 Failures that are hard to trigger on a real kernel, such as an interrupted dump (`NLM_F_DUMP_INTR`), an overrun, or a netlink error, are covered by unit tests with hand-built netlink messages instead.

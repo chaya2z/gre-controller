@@ -26,7 +26,7 @@ use rtnetlink::packet_route::link::{
 };
 
 use crate::config::{InterfaceName, InterfaceNameError};
-use crate::plan::{Endpoints, LinkKind, ObservedLink};
+use crate::plan::{Endpoints, LinkKind, ObservedAddress, ObservedLink};
 
 /// Interfaces and addresses of the network namespace at one point in time.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -141,7 +141,7 @@ fn snapshot(
         link.addresses.push(address);
         let usable = !flags.intersects(AddressFlags::Tentative | AddressFlags::Dadfailed);
         if usable && !link.is_owned() {
-            host_addresses.insert(address.addr());
+            host_addresses.insert(address.net.addr());
         }
     }
 
@@ -189,6 +189,7 @@ fn observed_link(message: &LinkMessage) -> Result<(InterfaceName, ObservedLink),
         (None, _) => LinkKind::Other(String::new()),
     };
     let link = ObservedLink {
+        index,
         kind,
         alias,
         addresses: Vec::new(),
@@ -234,17 +235,22 @@ fn gre6_endpoints(data: Option<&InfoData>) -> Endpoints {
     endpoints
 }
 
-fn observed_address(message: &AddressMessage) -> Result<(IpNet, AddressFlags), ObserveError> {
+fn observed_address(
+    message: &AddressMessage,
+) -> Result<(ObservedAddress, AddressFlags), ObserveError> {
     let index = message.header.index;
     let mut local = None;
     let mut address = None;
     // The header holds only the low 8 bits; `IFA_FLAGS` carries all of them.
     let mut flags = AddressFlags::from_bits_retain(u32::from(message.header.flags.bits()));
+    // The kernel omits `IFA_PROTO` when it is 0.
+    let mut protocol = 0;
     for attribute in &message.attributes {
         match attribute {
             AddressAttribute::Local(value) => local = Some(*value),
             AddressAttribute::Address(value) => address = Some(*value),
             AddressAttribute::Flags(value) => flags = *value,
+            AddressAttribute::Protocol(value) => protocol = u8::from(*value),
             _ => {}
         }
     }
@@ -260,7 +266,7 @@ fn observed_address(message: &AddressMessage) -> Result<(IpNet, AddressFlags), O
         address: ip,
         prefix_len,
     })?;
-    Ok((net, flags))
+    Ok((ObservedAddress { net, protocol }, flags))
 }
 
 /// Why a snapshot could not be taken.
@@ -337,7 +343,7 @@ mod tests {
     use rtnetlink::packet_route::AddressFamily;
 
     use super::*;
-    use crate::plan::OWNER_ALIAS;
+    use crate::plan::{ADDRESS_PROTOCOL, OWNER_ALIAS};
 
     fn name(s: &str) -> InterfaceName {
         InterfaceName::new(s).unwrap()
@@ -349,6 +355,10 @@ mod tests {
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    fn nets(link: &ObservedLink) -> Vec<IpNet> {
+        link.addresses.iter().map(|address| address.net).collect()
     }
 
     fn link(index: u32, name: &str, up: bool, extra: Vec<LinkAttribute>) -> LinkMessage {
@@ -450,12 +460,16 @@ mod tests {
         assert_eq!(
             snapshot.links[&name("gre1")],
             ObservedLink {
+                index: 3,
                 kind: LinkKind::Gre(Endpoints {
                     local: ip("192.0.2.1"),
                     remote: ip("198.51.100.1"),
                 }),
                 alias: Some(OWNER_ALIAS.to_owned()),
-                addresses: vec![net("10.0.1.1/31")],
+                addresses: vec![ObservedAddress {
+                    net: net("10.0.1.1/31"),
+                    protocol: 0,
+                }],
                 up: false,
             }
         );
@@ -467,15 +481,25 @@ mod tests {
             })
         );
         assert_eq!(
-            snapshot.links[&name("gre6")].addresses,
+            nets(&snapshot.links[&name("gre6")]),
             [net("fd00:1::1/127"), net("fe80::1/64")]
         );
         assert_eq!(
             snapshot.links[&name("eth0")],
             ObservedLink {
+                index: 2,
                 kind: LinkKind::Other(String::new()),
                 alias: None,
-                addresses: vec![net("192.0.2.1/24"), net("2001:db8:1::1/64")],
+                addresses: vec![
+                    ObservedAddress {
+                        net: net("192.0.2.1/24"),
+                        protocol: 0,
+                    },
+                    ObservedAddress {
+                        net: net("2001:db8:1::1/64"),
+                        protocol: 0,
+                    },
+                ],
                 up: true,
             }
         );
@@ -540,10 +564,7 @@ mod tests {
             ],
         )];
         let snapshot = snapshot(links, addresses).unwrap();
-        assert_eq!(
-            snapshot.links[&name("eth0")].addresses,
-            [net("10.0.0.1/32")]
-        );
+        assert_eq!(nets(&snapshot.links[&name("eth0")]), [net("10.0.0.1/32")]);
         assert_eq!(snapshot.host_addresses, BTreeSet::from([ip("10.0.0.1")]));
     }
 
@@ -571,6 +592,42 @@ mod tests {
     }
 
     #[test]
+    fn reads_address_protocol() {
+        let links = [link(
+            3,
+            "gre1",
+            true,
+            vec![alias(), gre(Ipv4Addr::LOCALHOST, Ipv4Addr::LOCALHOST)],
+        )];
+        let with_protocol = |net, protocol: u8| {
+            let mut message = plain_address(3, net);
+            message
+                .attributes
+                .push(AddressAttribute::Protocol(protocol.into()));
+            message
+        };
+        let addresses = [
+            plain_address(3, "10.0.1.1/31"),
+            with_protocol("10.0.2.1/31", ADDRESS_PROTOCOL),
+            with_protocol("fe80::1/64", 3),
+        ];
+        let snapshot = snapshot(links, addresses).unwrap();
+        let protocols: Vec<_> = snapshot.links[&name("gre1")]
+            .addresses
+            .iter()
+            .map(|address| (address.net, address.protocol, address.is_owned()))
+            .collect();
+        assert_eq!(
+            protocols,
+            [
+                (net("10.0.1.1/31"), 0, false),
+                (net("10.0.2.1/31"), ADDRESS_PROTOCOL, true),
+                (net("fe80::1/64"), 3, false),
+            ]
+        );
+    }
+
+    #[test]
     fn ignores_addresses_of_unknown_interfaces() {
         let snapshot = snapshot(
             [link(1, "lo", true, vec![])],
@@ -578,7 +635,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(snapshot.host_addresses, BTreeSet::new());
-        assert_eq!(snapshot.links[&name("lo")].addresses, Vec::<IpNet>::new());
+        assert_eq!(
+            snapshot.links[&name("lo")].addresses,
+            Vec::<ObservedAddress>::new()
+        );
     }
 
     #[test]

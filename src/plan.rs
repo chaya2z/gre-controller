@@ -20,6 +20,16 @@ use crate::config::{Family, InterfaceName};
 /// Changing this value would orphan the interfaces created by earlier releases.
 pub const OWNER_ALIAS: &str = "gre-controller";
 
+/// Address protocol (`IFA_PROTO`) that marks an address as added by this controller.
+///
+/// The kernel stores the value with the address and reports it back (Linux 5.18 or
+/// later). Only addresses that carry it are ever removed. Values 0 to 3 are used by the
+/// kernel itself (`IFAPROT_UNSPEC` and `IFAPROT_KERNEL_*`).
+///
+/// Changing this value would orphan the addresses added by earlier releases.
+// Inspired by the GRE IP protocol number.
+pub const ADDRESS_PROTOCOL: u8 = 47;
+
 /// Underlay endpoints of a GRE interface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Endpoints {
@@ -60,12 +70,31 @@ pub enum LinkKind {
 /// An existing interface in the kernel snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedLink {
+    /// Interface index. Changes address the interface by index, so that an interface
+    /// deleted and recreated under the same name in the meantime is not touched.
+    pub index: u32,
     pub kind: LinkKind,
     pub alias: Option<String>,
     /// Every address assigned to the interface, including kernel-generated ones.
-    pub addresses: Vec<IpNet>,
+    pub addresses: Vec<ObservedAddress>,
     /// Whether the interface is administratively UP (`IFF_UP`).
     pub up: bool,
+}
+
+/// An address assigned to an interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObservedAddress {
+    pub net: IpNet,
+    /// The address protocol (`IFA_PROTO`); 0 when the kernel does not report one.
+    pub protocol: u8,
+}
+
+impl ObservedAddress {
+    /// Whether this controller added the address (see [`ADDRESS_PROTOCOL`]).
+    #[must_use]
+    pub const fn is_owned(&self) -> bool {
+        self.protocol == ADDRESS_PROTOCOL
+    }
 }
 
 impl ObservedLink {
@@ -98,7 +127,8 @@ impl ObservedLink {
 /// from the plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
-    /// Create the interface with the ownership alias, assign the addresses, and bring it UP.
+    /// Create the interface with the ownership alias, assign the addresses marked with
+    /// [`ADDRESS_PROTOCOL`], and bring it UP.
     Create(TunnelSpec),
     /// Apply the changes to the owned interface in place, in order.
     Update(Vec<Change>),
@@ -175,19 +205,23 @@ fn decide(desired: &DesiredTunnel, link: Option<&ObservedLink>) -> Option<Decisi
     if endpoints != spec.endpoints {
         changes.push(Change::SetEndpoints(spec.endpoints));
     }
+    // Only addresses this controller added are removed. Kernel-generated addresses, such
+    // as IPv6 link-local ones, and addresses added by other tools are left alone. They
+    // are never adopted either: a declared address that already exists without the
+    // marker counts as present, but stays unowned.
+    //
     // Removals come first: an IPv6 address can only be assigned once per interface, so
     // changing its prefix length means removing the old entry before adding the new one.
     changes.extend(
         link.addresses
             .iter()
-            .filter(|&address| !spec.addresses.contains(address) && !is_kernel_generated(address))
-            .copied()
-            .map(Change::RemoveAddress),
+            .filter(|address| address.is_owned() && !spec.addresses.contains(&address.net))
+            .map(|address| Change::RemoveAddress(address.net)),
     );
     changes.extend(
         spec.addresses
             .iter()
-            .filter(|&address| !link.addresses.contains(address))
+            .filter(|&&net| !link.addresses.iter().any(|address| address.net == net))
             .copied()
             .map(Change::AddAddress),
     );
@@ -195,12 +229,6 @@ fn decide(desired: &DesiredTunnel, link: Option<&ObservedLink>) -> Option<Decisi
         changes.push(Change::SetUp);
     }
     (!changes.is_empty()).then_some(Decision::Update(changes))
-}
-
-/// Addresses the kernel may assign by itself. They are kept unless declared, because
-/// removing them would only make the kernel add them again (and break IPv6 on the link).
-fn is_kernel_generated(address: &IpNet) -> bool {
-    matches!(address.addr(), IpAddr::V6(ip) if ip.is_unicast_link_local())
 }
 
 #[cfg(test)]
@@ -238,15 +266,36 @@ mod tests {
         }
     }
 
-    /// An owned, UP `gre` interface that matches `v4_spec(addresses)`.
+    fn address(s: &str, protocol: u8) -> ObservedAddress {
+        ObservedAddress {
+            net: net(s),
+            protocol,
+        }
+    }
+
+    /// An owned, UP `gre` interface that matches `v4_spec(addresses)`, with every
+    /// address added by this controller.
     fn owned_v4(addresses: &[&str]) -> ObservedLink {
         ObservedLink {
+            index: 7,
             kind: LinkKind::Gre(v4_endpoints()),
             alias: Some(OWNER_ALIAS.to_owned()),
-            addresses: addresses.iter().copied().map(net).collect(),
+            addresses: addresses
+                .iter()
+                .map(|s| address(s, ADDRESS_PROTOCOL))
+                .collect(),
             up: true,
         }
     }
+
+    /// `link` with additional addresses.
+    fn with(mut link: ObservedLink, addresses: &[ObservedAddress]) -> ObservedLink {
+        link.addresses.extend_from_slice(addresses);
+        link
+    }
+
+    /// `IFAPROT_KERNEL_LL`, which the kernel sets on link-local addresses it generates.
+    const KERNEL_LL: u8 = 3;
 
     /// Plans a single declared tunnel named `gre1` against an optional existing interface.
     fn plan_one(desired: DesiredTunnel, link: Option<ObservedLink>) -> Option<Decision> {
@@ -287,7 +336,10 @@ mod tests {
 
         let link = ObservedLink {
             kind: LinkKind::Ip6Gre(v6_endpoints()),
-            ..owned_v4(&["10.0.2.0/31", "fd00:2::1/127", "fe80::1/64"])
+            ..with(
+                owned_v4(&["10.0.2.0/31", "fd00:2::1/127"]),
+                &[address("fe80::1/64", KERNEL_LL)],
+            )
         };
         let spec = TunnelSpec {
             family: Family::Ipv6,
@@ -315,9 +367,10 @@ mod tests {
             (
                 name("eth0"),
                 ObservedLink {
+                    index: 2,
                     kind: LinkKind::Other(String::new()),
                     alias: None,
-                    addresses: vec![net("192.0.2.1/24")],
+                    addresses: vec![address("192.0.2.1/24", 0)],
                     up: true,
                 },
             ),
@@ -365,8 +418,16 @@ mod tests {
     }
 
     #[test]
-    fn keeps_kernel_generated_link_local_addresses() {
-        let link = owned_v4(&["10.0.1.1/31", "fe80::c000:201/64", "fe80::1/10"]);
+    fn keeps_addresses_it_did_not_add() {
+        let link = with(
+            owned_v4(&["10.0.1.1/31"]),
+            &[
+                address("fe80::c000:201/64", KERNEL_LL),
+                address("10.9.9.9/32", 0),
+                address("fd00:9::9/64", 0),
+                address("fd00:9::8/64", ADDRESS_PROTOCOL + 1),
+            ],
+        );
         assert_eq!(
             plan_one(
                 DesiredTunnel::Resolved(v4_spec(&["10.0.1.1/31"])),
@@ -378,7 +439,10 @@ mod tests {
 
     #[test]
     fn adds_declared_link_local_address() {
-        let link = owned_v4(&["10.0.1.1/31"]);
+        let link = with(
+            owned_v4(&["10.0.1.1/31"]),
+            &[address("fe80::c000:201/64", KERNEL_LL)],
+        );
         let spec = v4_spec(&["10.0.1.1/31", "fe80::1/64"]);
         assert_eq!(
             update(link, spec),
@@ -387,12 +451,35 @@ mod tests {
     }
 
     #[test]
-    fn removes_non_link_local_ipv6_addresses() {
-        // fec0::/10 (deprecated site-local) is adjacent to fe80::/10 but not link-local.
-        let link = owned_v4(&["10.0.1.1/31", "fec0::1/64"]);
+    fn removes_own_link_local_address_once_undeclared() {
+        let link = with(
+            owned_v4(&["10.0.1.1/31", "fe80::1/64"]),
+            &[address("fe80::c000:201/64", KERNEL_LL)],
+        );
         assert_eq!(
             update(link, v4_spec(&["10.0.1.1/31"])),
-            vec![Change::RemoveAddress(net("fec0::1/64"))]
+            vec![Change::RemoveAddress(net("fe80::1/64"))]
+        );
+    }
+
+    #[test]
+    fn declared_address_without_marker_is_not_adopted() {
+        // It counts as present, so nothing is added and the marker is not set.
+        let link = with(owned_v4(&[]), &[address("10.0.1.1/31", 0)]);
+        assert_eq!(
+            plan_one(
+                DesiredTunnel::Resolved(v4_spec(&["10.0.1.1/31"])),
+                Some(link)
+            ),
+            None
+        );
+
+        // With a different prefix length it is not removed either. Adding the declared
+        // IPv6 address then fails in the kernel, because the address already exists.
+        let link = with(owned_v4(&[]), &[address("fd00:1::1/64", 0)]);
+        assert_eq!(
+            update(link, v4_spec(&["fd00:1::1/127"])),
+            vec![Change::AddAddress(net("fd00:1::1/127"))]
         );
     }
 
