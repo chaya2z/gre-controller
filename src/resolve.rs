@@ -166,7 +166,9 @@ fn resolve_endpoint(
         None => candidates,
     };
 
-    if let Some(current) = current.filter(|current| candidates.contains(current)) {
+    if let Some(current) = current
+        && candidates.contains(&current)
+    {
         return Ok(current);
     }
     let mut iter = candidates.iter().copied();
