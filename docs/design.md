@@ -125,7 +125,7 @@ The process is managed by systemd in a packaged installation. It does not daemon
 
 Transient runtime failures are logged and retried. The service must not require network readiness at startup to remain alive. Logs are emitted to standard output/error and collected by journald under systemd. When standard error is the journal stream (`JOURNAL_STREAM`), each line starts with its syslog priority (`<3>` for errors, `<4>` for warnings, `<6>` for information) and carries no timestamp of its own. State changes and failures are logged; unchanged reconciliations need not produce informational logs.
 
-Only one controller should manage a network namespace. Run with the privileges necessary for Netlink configuration (typically `CAP_NET_ADMIN`) and restrict unrelated privileges where practical. Other network managers must not configure the same interfaces. The controller must not rewrite their configuration automatically.
+Only one controller should manage a network namespace. Run with the privileges necessary for Netlink configuration (typically `CAP_NET_ADMIN`) and restrict unrelated privileges where practical. The shipped systemd unit (`packaging/gre-controller.service`) runs the controller as a dynamic, unprivileged user with only `CAP_NET_ADMIN`, and sandboxes the rest of the system. Other network managers must not configure the same interfaces. The controller must not rewrite their configuration automatically.
 
 ## Distribution and upgrades
 

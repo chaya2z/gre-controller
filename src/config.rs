@@ -959,6 +959,34 @@ mod tests {
         assert!(found.iter().all(|(tunnel, _)| *tunnel != "gre2"));
     }
 
+    /// The configuration file the packages install.
+    const PACKAGED: &str = include_str!("../packaging/config.toml");
+
+    #[test]
+    fn packaged_configuration_declares_no_tunnels() {
+        assert!(parse(PACKAGED).unwrap().tunnels.is_empty());
+    }
+
+    #[test]
+    fn packaged_example_is_valid_when_uncommented() {
+        // Uncomment everything after the active `[tunnels]` table: the example block.
+        let (head, example) = PACKAGED.split_once("\n[tunnels]\n").unwrap();
+        let example: String = example
+            .lines()
+            .map(|line| line.strip_prefix("# ").unwrap_or(line))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let uncommented = format!("{head}\n[tunnels]\n{example}");
+        let config = parse(&uncommented).unwrap();
+        assert_eq!(
+            config
+                .tunnels
+                .keys()
+                .map(InterfaceName::as_str)
+                .collect::<Vec<_>>(),
+            ["gre-peer01"]
+        );
+    }
     #[test]
     fn missing_file_is_a_read_error() {
         let err = load(Path::new("/nonexistent/gre-controller/config.toml")).unwrap_err();

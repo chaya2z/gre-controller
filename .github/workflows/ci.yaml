@@ -36,3 +36,15 @@ jobs:
       - name: Show kernel
         run: uname -r
       - run: scripts/netns-test.sh
+
+  systemd:
+    # The packaged unit under the real systemd, in a dedicated network namespace. A
+    # separate job, so that the GRE modules are not already loaded by other tests.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - run: scripts/systemd-test.sh
