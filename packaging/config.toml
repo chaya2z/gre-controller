@@ -1,0 +1,17 @@
+# gre-controller configuration.
+#
+# Each [tunnels.<name>] table declares one GRE interface. The controller creates,
+# updates, and deletes the interfaces it manages to match this file. An empty
+# [tunnels] table declares that no managed tunnels should remain.
+#
+# Check the file with `gre-controller validate` before restarting the service, and
+# replace it atomically when the service is running.
+# See https://github.com/chaya2z/gre-controller for all fields.
+
+[tunnels]
+
+# [tunnels.gre-peer01]
+# family = "ipv6"
+# local = "my-gateway.example.com"
+# remote = "peer-gateway.example.com"
+# addresses = ["10.0.1.1/31"]

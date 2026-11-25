@@ -1,0 +1,48 @@
+[Unit]
+Description=Declarative GRE tunnel controller
+Documentation=https://github.com/chaya2z/gre-controller
+# No dependency on network-online.target: unreachable endpoints and failed lookups
+# are retried every pass, so the controller does not wait for the network.
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/gre-controller run
+# An invalid configuration does not stop the service; each pass logs it and retries.
+# Exit codes other than 0 mean the netlink socket or the signal handlers could not be
+# set up.
+Restart=on-failure
+RestartSec=5s
+
+# Privileges: only CAP_NET_ADMIN, as an unprivileged dynamic user.
+DynamicUser=yes
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+
+# Netlink for the kernel, IPv4/IPv6 and Unix sockets for name resolution.
+RestrictAddressFamilies=AF_NETLINK AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+# The kernel still loads the GRE modules on demand when an interface is created.
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
