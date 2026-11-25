@@ -221,6 +221,14 @@ pub enum Issue {
     DuplicateAddress {
         address: IpAddr,
     },
+    /// Another tunnel has the same literal local and remote addresses. Linux refuses a
+    /// second GRE tunnel with the same endpoints, so only one of them could exist.
+    DuplicateEndpoints {
+        local: IpAddr,
+        remote: IpAddr,
+        /// The other tunnels with these endpoints, by key.
+        shared_with: Vec<String>,
+    },
 }
 
 impl fmt::Display for Issue {
@@ -254,6 +262,15 @@ impl fmt::Display for Issue {
             Self::DuplicateAddress { address } => {
                 write!(f, "`addresses` contains {address} more than once")
             }
+            Self::DuplicateEndpoints {
+                local,
+                remote,
+                shared_with,
+            } => write!(
+                f,
+                "`local` {local} and `remote` {remote} are also used by {}",
+                shared_with.join(", ")
+            ),
         }
     }
 }
@@ -289,6 +306,7 @@ pub fn parse(text: &str) -> Result<Config, ConfigError> {
             })),
         }
     }
+    errors.extend(duplicate_endpoints(&tunnels));
 
     if errors.is_empty() {
         Ok(Config { tunnels })
@@ -297,6 +315,44 @@ pub fn parse(text: &str) -> Result<Config, ConfigError> {
     }
 }
 
+/// Reports tunnels that share literal local and remote addresses. The kernel matches
+/// GRE tunnels by endpoints and keys, and the controller sets no keys, so a second
+/// tunnel with the same endpoints could never be created. Tunnels whose endpoints only
+/// coincide after DNS resolution are not detected here.
+fn duplicate_endpoints(tunnels: &BTreeMap<InterfaceName, Tunnel>) -> Vec<ValidationError> {
+    let mut by_endpoints: BTreeMap<(IpAddr, IpAddr), Vec<&InterfaceName>> = BTreeMap::new();
+    for (name, tunnel) in tunnels {
+        if let (Endpoint::Address(local), Endpoint::Address(remote)) =
+            (&tunnel.local, &tunnel.remote)
+        {
+            by_endpoints
+                .entry((*local, *remote))
+                .or_default()
+                .push(name);
+        }
+    }
+    let mut errors = Vec::new();
+    for ((local, remote), names) in by_endpoints {
+        if names.len() < 2 {
+            continue;
+        }
+        for name in &names {
+            errors.push(ValidationError {
+                tunnel: name.to_string(),
+                issue: Issue::DuplicateEndpoints {
+                    local,
+                    remote,
+                    shared_with: names
+                        .iter()
+                        .filter(|other| *other != name)
+                        .map(ToString::to_string)
+                        .collect(),
+                },
+            });
+        }
+    }
+    errors
+}
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConfig {
@@ -725,6 +781,80 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rejects_duplicate_literal_endpoints() {
+        let addresses = r#"["10.0.0.1/31"]"#;
+        let text = tunnel_toml("gre-a", "ipv4", "192.0.2.1", "198.51.100.1", addresses)
+            + &tunnel_toml("gre-b", "ipv4", "192.0.2.1", "198.51.100.1", addresses)
+            + &tunnel_toml("gre-c", "ipv4", "192.0.2.1", "198.51.100.1", addresses)
+            // Not duplicates: another remote, the reverse direction, and a DNS name that
+            // may or may not resolve to the same address.
+            + &tunnel_toml("gre-d", "ipv4", "192.0.2.1", "198.51.100.2", addresses)
+            + &tunnel_toml("gre-e", "ipv4", "198.51.100.1", "192.0.2.1", addresses)
+            + &tunnel_toml("gre-f", "ipv4", "peer.example", "198.51.100.1", addresses)
+            + &tunnel_toml("gre6-a", "ipv6", "2001:db8::1", "2001:db8::2", addresses)
+            + &tunnel_toml("gre6-b", "ipv6", "2001:db8::1", "2001:db8::2", addresses);
+        let Err(ConfigError::Invalid(errors)) = parse(&text) else {
+            panic!("expected a validation error");
+        };
+        let local = "192.0.2.1".parse().unwrap();
+        let remote = "198.51.100.1".parse().unwrap();
+        let shared = |names: &[&str]| names.iter().map(ToString::to_string).collect();
+        let found: Vec<_> = errors
+            .iter()
+            .map(|e| (e.tunnel.as_str(), &e.issue))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    "gre-a",
+                    &Issue::DuplicateEndpoints {
+                        local,
+                        remote,
+                        shared_with: shared(&["gre-b", "gre-c"]),
+                    }
+                ),
+                (
+                    "gre-b",
+                    &Issue::DuplicateEndpoints {
+                        local,
+                        remote,
+                        shared_with: shared(&["gre-a", "gre-c"]),
+                    }
+                ),
+                (
+                    "gre-c",
+                    &Issue::DuplicateEndpoints {
+                        local,
+                        remote,
+                        shared_with: shared(&["gre-a", "gre-b"]),
+                    }
+                ),
+                (
+                    "gre6-a",
+                    &Issue::DuplicateEndpoints {
+                        local: "2001:db8::1".parse().unwrap(),
+                        remote: "2001:db8::2".parse().unwrap(),
+                        shared_with: shared(&["gre6-b"]),
+                    }
+                ),
+                (
+                    "gre6-b",
+                    &Issue::DuplicateEndpoints {
+                        local: "2001:db8::1".parse().unwrap(),
+                        remote: "2001:db8::2".parse().unwrap(),
+                        shared_with: shared(&["gre6-a"]),
+                    }
+                ),
+            ]
+        );
+        assert_eq!(
+            errors[0].to_string(),
+            "tunnels.\"gre-a\": `local` 192.0.2.1 and `remote` 198.51.100.1 are also used by \
+             gre-b, gre-c"
+        );
+    }
     #[test]
     fn interface_name_rules() {
         // Names the kernel accepts are not restricted further for now.
