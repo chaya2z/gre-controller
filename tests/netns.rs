@@ -566,3 +566,106 @@ async fn endpoint_change_keeps_unmanaged_settings() {
         assert_eq!(after.addresses, before.addresses, "{n}: addresses changed");
     }
 }
+
+/// A `gre-controller run` process whose log lines are collected in the background.
+struct Controller {
+    child: std::process::Child,
+    lines: std::sync::mpsc::Receiver<String>,
+}
+
+impl Controller {
+    fn start(config: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("gre-controller-{}.toml", std::process::id()));
+        fs::write(&path, config).unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_gre-controller"))
+            .args(["run", "--config"])
+            .arg(&path)
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let (sender, lines) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(stderr)
+                .lines()
+                .map_while(Result::ok)
+            {
+                eprintln!("controller: {line}");
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        Self { child, lines }
+    }
+
+    /// Waits for a log line that contains every one of `parts`.
+    fn wait_for(&self, parts: &[&str]) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match self.lines.recv_timeout(left) {
+                Ok(line) if parts.iter().all(|part| line.contains(part)) => return,
+                Ok(_) => {}
+                Err(error) => panic!("no log line with {parts:?}: {error}"),
+            }
+        }
+    }
+
+    /// Sends `SIGTERM` and requires a successful exit.
+    fn stop(mut self) {
+        let pid = self.child.id().to_string();
+        let status = Command::new("kill").args(["-TERM", &pid]).status().unwrap();
+        assert!(status.success());
+        let status = self.child.wait().unwrap();
+        assert!(status.success(), "controller exited with {status}");
+        self.wait_for(&["stopped"]);
+    }
+}
+
+/// End to end: `run` creates the declared tunnel, keeps it when stopped, and changes
+/// nothing while the configuration is invalid.
+#[tokio::test]
+#[ignore = "changes kernel state; run scripts/netns-test.sh"]
+async fn run_reconciles_and_stops_without_teardown() {
+    require_test_netns();
+    // The local endpoint must be an address of the host.
+    // veth is already known to work on the CI runner.
+    ip(&[
+        "link",
+        "add",
+        "uplink",
+        "type",
+        "veth",
+        "peer",
+        "name",
+        "uplink-peer",
+    ]);
+    ip(&["address", "add", "192.0.2.80/24", "dev", "uplink"]);
+    ip(&["link", "set", "uplink", "up"]);
+    let config = r#"
+[tunnels.run-gre]
+family = "ipv4"
+local = "192.0.2.80"
+remote = "198.51.100.80"
+addresses = ["10.8.0.1/30"]
+"#;
+    let tunnel = spec(
+        Family::Ipv4,
+        "192.0.2.80",
+        "198.51.100.80",
+        &["10.8.0.1/30"],
+    );
+
+    let controller = Controller::start(config);
+    controller.wait_for(&["run-gre", "created"]);
+    controller.stop();
+    assert_matches(&snapshot().await, "run-gre", &tunnel);
+
+    // An invalid configuration is not an empty one: the tunnel stays.
+    let controller = Controller::start(&config.replace("10.8.0.1/30", "10.8.0.1"));
+    controller.wait_for(&["invalid configuration"]);
+    controller.stop();
+    assert_matches(&snapshot().await, "run-gre", &tunnel);
+}
