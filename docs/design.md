@@ -85,7 +85,7 @@ Resolution is retried periodically, including for tunnels whose configuration ha
 
 ## Updates and ownership
 
-The controller identifies its own GRE interfaces using an explicit Linux interface alias and checks the interface kind. A matching name alone is not ownership. Pre-existing interfaces without the controller's ownership marker are never adopted automatically. The marker is an ownership convention, not an access-control boundary.
+The controller identifies its own GRE interfaces using an explicit Linux interface alias (`gre-controller`) and checks the interface kind (`gre` or `ip6gre`). A matching name alone is not ownership. Pre-existing interfaces without the controller's ownership marker are never adopted automatically. The marker is an ownership convention, not an access-control boundary.
 
 | Change | Expected behavior |
 | --- | --- |
@@ -98,7 +98,7 @@ The controller identifies its own GRE interfaces using an explicit Linux interfa
 
 Endpoint updates should preserve interface identity (ifindex) and overlay addresses. If an in-place operation fails, do not silently fall back to deleting and recreating the interface. A deliberate family change is different: validate the new definition and resolve its endpoints before attempting replacement, and report any failure. Network interruption is possible during replacement or endpoint changes.
 
-The declared overlay address set is authoritative for controller-managed interfaces. Preserve kernel-generated addresses such as automatically configured IPv6 link-local addresses unless explicitly managed by the configuration. Do not modify addresses on unrelated interfaces.
+The declared overlay address set is authoritative for controller-managed interfaces. Preserve kernel-generated addresses such as automatically configured IPv6 link-local addresses unless explicitly managed by the configuration. Undeclared IPv6 link-local addresses (`fe80::/10`) are never removed, so a link-local address that is removed from the configuration also remains on the interface. Do not modify addresses on unrelated interfaces.
 
 Kernel operations are not a multi-operation transaction. Validate inputs before making changes, verify operation results, report partial failures, and retry convergence. Do not promise atomic updates, rollback, or uninterrupted traffic.
 
