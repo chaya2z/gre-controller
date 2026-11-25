@@ -1,0 +1,57 @@
+# DEB and RPM packages, built with nfpm (https://github.com/goreleaser/nfpm).
+#
+# Environment variables, set by scripts/build-packages.sh:
+#   VERSION    package version, from Cargo.toml
+#   ARCH       amd64 or arm64 (nfpm maps them to x86_64 and aarch64 for RPM)
+#   GLIBC_MIN  newest glibc symbol version the binary needs
+#   BINARY     path of the release binary
+name: gre-controller
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: Taisuke Nakano <58199341+chaya2z@users.noreply.github.com>
+description: |-
+  Declarative GRE tunnel controller.
+  Creates, updates, and deletes GRE interfaces to match a TOML file, with IP
+  addresses or DNS names as endpoints, and runs as a systemd service.
+homepage: https://github.com/chaya2z/gre-controller
+
+contents:
+  - src: ${BINARY}
+    dst: /usr/bin/gre-controller
+    expand: true
+    file_info:
+      mode: 0755
+  - src: packaging/gre-controller.service
+    dst: /usr/lib/systemd/system/gre-controller.service
+    file_info:
+      mode: 0644
+  # Kept on upgrade and removal; a modified file is never overwritten.
+  - src: packaging/config.toml
+    dst: /etc/gre-controller/config.toml
+    type: config|noreplace
+    file_info:
+      mode: 0644
+  - src: README.md
+    dst: /usr/share/doc/gre-controller/README.md
+    file_info:
+      mode: 0644
+  - src: docs/design.md
+    dst: /usr/share/doc/gre-controller/design.md
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh
+  postremove: packaging/scripts/postremove.sh
+
+overrides:
+  deb:
+    depends:
+      - libc6 (>= ${GLIBC_MIN})
+  rpm:
+    depends:
+      - glibc >= ${GLIBC_MIN}

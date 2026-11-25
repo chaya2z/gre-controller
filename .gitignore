@@ -17,3 +17,4 @@ target/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #  This project keeps JetBrains ignores in each developer's global gitignore instead.
 #.idea/
+/dist
