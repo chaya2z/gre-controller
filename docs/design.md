@@ -62,7 +62,7 @@ Read configuration -> Validate entire configuration
                       Report and repeat
 ```
 
-Configuration validation is global: an invalid snapshot must not cause any kernel changes in that pass. Runtime failures, such as DNS failures, are isolated to the affected tunnel where possible. If a reliable kernel snapshot cannot be obtained, do not perform destructive operations based on incomplete information.
+Configuration validation is global: an invalid snapshot must not cause any kernel changes in that pass. Runtime failures, such as DNS failures, are isolated to the affected tunnel where possible. If a reliable kernel snapshot cannot be obtained, do not perform destructive operations based on incomplete information. The interface and address dumps are used only if each one completes (ends with `NLMSG_DONE`) and the kernel does not mark it as interrupted by a concurrent change (`NLM_F_DUMP_INTR`); otherwise the pass makes no changes.
 
 | Desired definition | Actual interface | Action |
 | --- | --- | --- |
@@ -79,7 +79,7 @@ An unchanged configuration and unchanged resolved addresses must not cause redun
 
 Both endpoints accept literal addresses or DNS names. Literal addresses are used without DNS resolution. Names are resolved using the host's name resolution facilities. Only results matching the declared underlay family are eligible; duplicate results are treated as a single address. Unspecified addresses in the results are ignored. Each name is looked up once per pass, even if several tunnels use it.
 
-The local endpoint must be assigned to the host. When multiple eligible addresses are returned, retain the currently configured endpoint if it is still eligible. Otherwise, select a candidate only if it is unique. Do not switch arbitrarily between multiple candidates. An unresolved or ambiguous endpoint prevents changes to the affected tunnel for that pass; an existing tunnel is retained and a missing tunnel is not created.
+The local endpoint must be assigned to the host. Addresses on controller-owned interfaces do not count, nor do IPv6 addresses that are still tentative or failed duplicate address detection. When multiple eligible addresses are returned, retain the currently configured endpoint if it is still eligible. Otherwise, select a candidate only if it is unique. Do not switch arbitrarily between multiple candidates. An unresolved or ambiguous endpoint prevents changes to the affected tunnel for that pass; an existing tunnel is retained and a missing tunnel is not created.
 
 Resolution is retried periodically, including for tunnels whose configuration has not changed. DNS changes are therefore detected subject to resolver caching and the reconciliation interval. Retaining a previous endpoint does not guarantee connectivity. The controller does not register its own DNS records, perform peer health checks, or guarantee seamless endpoint changes.
 
