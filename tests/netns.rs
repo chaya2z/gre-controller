@@ -19,12 +19,13 @@ use std::collections::BTreeMap;
 
 use gre_controller::apply;
 use gre_controller::config::{Family, InterfaceName};
-use gre_controller::observe::{self, Snapshot};
+use gre_controller::observe::{self, Snapshot, TunnelSettings};
 use gre_controller::plan::{
     self, ADDRESS_PROTOCOL, Decision, DesiredTunnel, Endpoints, LinkKind, OWNER_ALIAS,
     ObservedLink, TunnelSpec,
 };
 use ipnet::IpNet;
+use rtnetlink::packet_route::link::{InfoData, InfoGre, InfoGre6};
 
 /// Panics unless the process runs in the namespace named by `GRE_CONTROLLER_TEST_NETNS`,
 /// so that `cargo test -- --ignored` cannot change the host's own namespace.
@@ -220,7 +221,7 @@ async fn reconcile(desired: &[(&str, &TunnelSpec)]) -> BTreeMap<InterfaceName, D
     let mut handle = observe::connect().unwrap();
     let before = observe::observe(&mut handle).await.unwrap();
     let decisions = plan::plan(&desired, &before.links);
-    for (name, result) in apply::apply(&handle, &decisions, &before.links).await {
+    for (name, result) in apply::apply(&handle, &decisions, &before).await {
         if let Err(error) = result {
             panic!("{name}: {error}");
         }
@@ -279,61 +280,6 @@ async fn creates_tunnels_and_converges() {
         !decisions.contains_key(&name("ap-v4")) && !decisions.contains_key(&name("ap-v6")),
         "{decisions:?}"
     );
-}
-
-#[tokio::test]
-#[ignore = "changes kernel state; run scripts/netns-test.sh"]
-async fn endpoint_change_keeps_index_and_addresses() {
-    require_test_netns();
-    let cases = [
-        (
-            "ep-v4",
-            spec(
-                Family::Ipv4,
-                "192.0.2.20",
-                "198.51.100.20",
-                &["10.2.0.1/30", "fd00:c::1/64"],
-            ),
-            spec(
-                Family::Ipv4,
-                "192.0.2.21",
-                "198.51.100.21",
-                &["10.2.0.1/30", "fd00:c::1/64"],
-            ),
-        ),
-        (
-            "ep-v6",
-            spec(
-                Family::Ipv6,
-                "2001:db8::20",
-                "2001:db8::21",
-                &["10.2.1.1/30", "fd00:d::1/64"],
-            ),
-            spec(
-                Family::Ipv6,
-                "2001:db8::22",
-                "2001:db8::23",
-                &["10.2.1.1/30", "fd00:d::1/64"],
-            ),
-        ),
-    ];
-    for (n, old, new) in &cases {
-        reconcile(&[(n, old)]).await;
-        let before = snapshot().await;
-        let before = link(&before, n).clone();
-
-        let decisions = reconcile(&[(n, new)]).await;
-        assert_eq!(
-            decisions[&name(n)],
-            Decision::Update(vec![plan::Change::SetEndpoints(new.endpoints)])
-        );
-
-        let after = snapshot().await;
-        assert_matches(&after, n, new);
-        let after = link(&after, n);
-        assert_eq!(after.index, before.index, "{n}: ifindex changed");
-        assert_eq!(after.addresses, before.addresses, "{n}: addresses changed");
-    }
 }
 
 #[tokio::test]
@@ -493,4 +439,130 @@ async fn replaces_deletes_and_leaves_unowned_interfaces() {
     let foreign = link(&snapshot, "foreign");
     assert_eq!(foreign.alias, None);
     assert!(foreign.addresses.is_empty() && !foreign.up, "{foreign:?}");
+}
+
+/// The current tunnel settings without the endpoints, which are expected to change.
+fn settings_without_endpoints(snapshot: &Snapshot, n: &str) -> TunnelSettings {
+    let mut settings = snapshot.tunnel_settings[&name(n)].clone();
+    match &mut settings.data {
+        InfoData::GreTun(data) => {
+            data.retain(|attribute| !matches!(attribute, InfoGre::Local(_) | InfoGre::Remote(_)));
+        }
+        InfoData::GreTun6(data) => {
+            data.retain(|attribute| !matches!(attribute, InfoGre6::Local(_) | InfoGre6::Remote(_)));
+        }
+        other => panic!("{n}: unexpected settings {other:?}"),
+    }
+    settings
+}
+
+/// TTL (hop limit) and input/output keys as reported.
+fn ttl_and_keys(settings: &TunnelSettings) -> (Option<u8>, Option<u32>, Option<u32>) {
+    let (mut ttl, mut ikey, mut okey) = (None, None, None);
+    match &settings.data {
+        InfoData::GreTun(data) => {
+            for attribute in data {
+                match attribute {
+                    InfoGre::Ttl(value) => ttl = Some(*value),
+                    InfoGre::IKey(value) => ikey = Some(*value),
+                    InfoGre::OKey(value) => okey = Some(*value),
+                    _ => {}
+                }
+            }
+        }
+        InfoData::GreTun6(data) => {
+            for attribute in data {
+                match attribute {
+                    InfoGre6::Ttl(value) => ttl = Some(*value),
+                    InfoGre6::IKey(value) => ikey = Some(*value),
+                    InfoGre6::OKey(value) => okey = Some(*value),
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    (ttl, ikey, okey)
+}
+
+/// An endpoint change keeps the interface and everything the controller does not
+/// manage: ifindex, addresses, MTU, TTL / hop limit, and GRE keys set by hand.
+#[tokio::test]
+#[ignore = "changes kernel state; run scripts/netns-test.sh"]
+async fn endpoint_change_keeps_unmanaged_settings() {
+    require_test_netns();
+    let cases = [
+        (
+            "ep-v4",
+            "gre",
+            "ttl",
+            spec(
+                Family::Ipv4,
+                "192.0.2.20",
+                "198.51.100.20",
+                &["10.2.0.1/30", "fd00:c::1/64"],
+            ),
+            spec(
+                Family::Ipv4,
+                "192.0.2.21",
+                "198.51.100.21",
+                &["10.2.0.1/30", "fd00:c::1/64"],
+            ),
+        ),
+        (
+            "ep-v6",
+            "ip6gre",
+            "hoplimit",
+            spec(
+                Family::Ipv6,
+                "2001:db8::20",
+                "2001:db8::21",
+                &["10.2.1.1/30", "fd00:d::1/64"],
+            ),
+            spec(
+                Family::Ipv6,
+                "2001:db8::22",
+                "2001:db8::23",
+                &["10.2.1.1/30", "fd00:d::1/64"],
+            ),
+        ),
+    ];
+    for (n, kind, ttl_option, old, new) in &cases {
+        reconcile(&[(n, old)]).await;
+        // Settings the controller does not manage, changed by hand. The MTU comes last:
+        // adding a key lengthens the GRE header, and the kernel lowers the MTU to match
+        // unless the request carries one, which `ip link set ... type` does not.
+        ip(&[
+            "link", "set", "dev", n, "type", kind, ttl_option, "33", "key", "1234",
+        ]);
+        ip(&["link", "set", "dev", n, "mtu", "1400"]);
+
+        let before = snapshot().await;
+        let before_settings = settings_without_endpoints(&before, n);
+        assert_eq!(before_settings.mtu, 1400, "{n}: setup failed");
+        let (ttl, ikey, okey) = ttl_and_keys(&before_settings);
+        assert_eq!(ttl, Some(33), "{n}: setup failed: {before_settings:?}");
+        assert!(
+            ikey.is_some_and(|key| key != 0) && ikey == okey,
+            "{n}: setup failed: {before_settings:?}"
+        );
+        let before = link(&before, n).clone();
+
+        let decisions = reconcile(&[(n, new)]).await;
+        assert_eq!(
+            decisions[&name(n)],
+            Decision::Update(vec![plan::Change::SetEndpoints(new.endpoints)])
+        );
+
+        let after = snapshot().await;
+        assert_matches(&after, n, new);
+        assert_eq!(
+            settings_without_endpoints(&after, n),
+            before_settings,
+            "{n}: settings changed"
+        );
+        let after = link(&after, n);
+        assert_eq!(after.index, before.index, "{n}: ifindex changed");
+        assert_eq!(after.addresses, before.addresses, "{n}: addresses changed");
+    }
 }

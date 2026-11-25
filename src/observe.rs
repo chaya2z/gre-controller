@@ -37,6 +37,18 @@ pub struct Snapshot {
     /// an interface this controller does not own, except IPv6 addresses that are still
     /// tentative or failed duplicate address detection.
     pub host_addresses: BTreeSet<IpAddr>,
+    /// Current settings of every `gre` and `ip6gre` interface that the kernel reported
+    /// with its MTU and tunnel parameters. Endpoint changes send them back, so that
+    /// settings the controller does not manage are kept.
+    pub tunnel_settings: BTreeMap<InterfaceName, TunnelSettings>,
+}
+
+/// The MTU and tunnel parameters (`IFLA_INFO_DATA`) of a GRE interface, as reported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TunnelSettings {
+    pub mtu: u32,
+    /// `InfoData::GreTun` for `gre`, `InfoData::GreTun6` for `ip6gre`.
+    pub data: InfoData,
 }
 
 /// Opens an rtnetlink connection for [`observe`] and spawns it on the current Tokio
@@ -125,8 +137,12 @@ fn snapshot(
     addresses: impl IntoIterator<Item = AddressMessage>,
 ) -> Result<Snapshot, ObserveError> {
     let mut by_index = BTreeMap::new();
+    let mut tunnel_settings = BTreeMap::new();
     for message in links {
-        let (name, link) = observed_link(&message)?;
+        let (name, link, settings) = observed_link(&message)?;
+        if let Some(settings) = settings {
+            tunnel_settings.insert(name.clone(), settings);
+        }
         by_index.insert(message.header.index, (name, link));
     }
 
@@ -148,12 +164,16 @@ fn snapshot(
     Ok(Snapshot {
         links: by_index.into_values().collect(),
         host_addresses,
+        tunnel_settings,
     })
 }
 
-fn observed_link(message: &LinkMessage) -> Result<(InterfaceName, ObservedLink), ObserveError> {
+type LinkParts = (InterfaceName, ObservedLink, Option<TunnelSettings>);
+
+fn observed_link(message: &LinkMessage) -> Result<LinkParts, ObserveError> {
     let index = message.header.index;
     let mut name = None;
+    let mut mtu = None;
     let mut alias = None;
     let mut kind = None;
     let mut data = None;
@@ -161,6 +181,7 @@ fn observed_link(message: &LinkMessage) -> Result<(InterfaceName, ObservedLink),
         match attribute {
             LinkAttribute::IfName(value) => name = Some(value),
             LinkAttribute::IfAlias(value) => alias = Some(value.clone()),
+            LinkAttribute::Mtu(value) => mtu = Some(*value),
             LinkAttribute::LinkInfo(infos) => {
                 for info in infos {
                     match info {
@@ -188,6 +209,16 @@ fn observed_link(message: &LinkMessage) -> Result<(InterfaceName, ObservedLink),
         // Interfaces without a kind, such as physical NICs.
         (None, _) => LinkKind::Other(String::new()),
     };
+    // Without both, an endpoint change could not keep the current settings.
+    let settings = match (data, mtu) {
+        (Some(data @ (InfoData::GreTun(_) | InfoData::GreTun6(_))), Some(mtu)) => {
+            Some(TunnelSettings {
+                mtu,
+                data: data.clone(),
+            })
+        }
+        _ => None,
+    };
     let link = ObservedLink {
         index,
         kind,
@@ -195,7 +226,7 @@ fn observed_link(message: &LinkMessage) -> Result<(InterfaceName, ObservedLink),
         addresses: Vec::new(),
         up: message.header.flags.contains(LinkFlags::Up),
     };
-    Ok((name, link))
+    Ok((name, link, settings))
 }
 
 /// Endpoints of a `gre` interface. Missing attributes read as unspecified, which never
@@ -588,6 +619,39 @@ mod tests {
         assert_eq!(
             snapshot.host_addresses,
             BTreeSet::from([ip("2001:db8:1::3"), ip("2001:db8:1::4")])
+        );
+    }
+
+    #[test]
+    fn records_tunnel_settings() {
+        let data = gre(Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(198, 51, 100, 1));
+        let links = [
+            link(
+                3,
+                "gre1",
+                true,
+                vec![LinkAttribute::Mtu(1400), data.clone()],
+            ),
+            // Without the MTU the settings are incomplete.
+            link(4, "gre2", true, vec![data]),
+            link(
+                5,
+                "gre3",
+                true,
+                vec![LinkAttribute::Mtu(1476), link_info(InfoKind::GreTun, None)],
+            ),
+            link(6, "eth0", true, vec![LinkAttribute::Mtu(1500)]),
+        ];
+        let snapshot = snapshot(links, []).unwrap();
+        assert_eq!(
+            snapshot.tunnel_settings.keys().collect::<Vec<_>>(),
+            [&name("gre1")]
+        );
+        let settings = &snapshot.tunnel_settings[&name("gre1")];
+        assert_eq!(settings.mtu, 1400);
+        assert!(
+            matches!(&settings.data, InfoData::GreTun(data) if data.contains(&InfoGre::Ttl(64))),
+            "{settings:?}"
         );
     }
 
