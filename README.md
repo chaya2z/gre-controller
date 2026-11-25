@@ -3,7 +3,7 @@
 A declarative GRE tunnel controller for Linux, written in Rust.
 
 > [!NOTE]
-> **Project status:** Pre-release. The commands, reconciliation, the systemd service, and packages described below define the intended interface; they are not yet implemented or verified.
+> **Project status:** Pre-release. Only offline configuration validation (`gre-controller validate`) is implemented. The `run` command, reconciliation, the systemd service, and packages described below define the intended interface; they are not yet implemented or verified.
 
 ## Overview
 
@@ -95,7 +95,7 @@ The controller re-reads the configuration during reconciliation. To remove a tun
 ## Usage
 
 > [!NOTE]
-> `validate`, `run`, and the systemd service are not yet implemented.
+> `validate` is implemented. `run` and the systemd service are not yet implemented.
 
 Validate the configuration before starting the service:
 

@@ -1,7 +1,7 @@
 # Design and reconciliation
 
 > [!NOTE]
-> This document describes the intended public behavior of gre-controller. It is a design document, not a claim of implemented or tested behavior.
+> This document describes the intended public behavior of gre-controller. It is a design document, not a claim of implemented or tested behavior. Currently only configuration parsing and offline validation are implemented.
 
 ## Management boundary
 
@@ -30,6 +30,13 @@ Each tunnel has exactly these public configuration fields:
 - `addresses`: array of local overlay addresses in CIDR notation.
 
 Reject invalid TOML, unknown fields, missing required fields, invalid interface names, invalid endpoint values, literal endpoint addresses that do not match the declared family, and invalid CIDRs before mutating kernel state. Preserve the host portion of overlay addresses; they are interface addresses, not just network prefixes.
+
+Interface names, endpoints, and addresses are also subject to the following rules:
+
+- Interface names follow the Linux kernel's naming rules: 1 to 15 bytes, not `.` or `..`, and without `/`, `:`, or whitespace. `%` is also rejected because the kernel treats such names as templates. These rules are provisional; additional restrictions may be added after testing.
+- `addresses` must contain at least one address. Each address must be unique within a tunnel; the same IP address with a different prefix length is a duplicate. Unspecified and multicast addresses are rejected.
+- Literal endpoint addresses must not be unspecified (`0.0.0.0` or `::`).
+- DNS names consist of letters, digits, and hyphens, with labels of at most 63 characters and a total length of at most 253 characters; a trailing dot is allowed and underscores are not. A name whose last label is entirely numeric (for example, `10.0.1`) is rejected because resolvers may interpret it as a legacy IPv4 literal.
 
 The schema is intentionally small. Reconciliation timing, MTU, GRE keys, TTL/hop limit, defaults, enable/disable flags, and deletion protection are not public configuration fields. MTU and other unmanaged attributes are not forcibly reset during reconciliation. Schema-version fields are not part of the current design; application releases and future schema compatibility are separate concerns.
 
