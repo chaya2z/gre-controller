@@ -17,6 +17,7 @@ description: |-
   Creates, updates, and deletes GRE interfaces to match a TOML file, with IP
   addresses or DNS names as endpoints, and runs as a systemd service.
 homepage: https://github.com/chaya2z/gre-controller
+license: MIT OR Apache-2.0
 
 contents:
   - src: ${BINARY}
@@ -40,6 +41,14 @@ contents:
       mode: 0644
   - src: docs/design.md
     dst: /usr/share/doc/gre-controller/design.md
+    file_info:
+      mode: 0644
+  - src: LICENSE-MIT
+    dst: /usr/share/doc/gre-controller/LICENSE-MIT
+    file_info:
+      mode: 0644
+  - src: LICENSE-APACHE
+    dst: /usr/share/doc/gre-controller/LICENSE-APACHE
     file_info:
       mode: 0644
 

@@ -3,7 +3,7 @@
 A declarative GRE tunnel controller for Linux, written in Rust.
 
 > [!NOTE]
-> **Project status:** Pre-release. `gre-controller validate` and `gre-controller run` are implemented and tested in a network namespace on a CI runner. The systemd service and packages described below define the intended interface; they are not yet implemented or verified.
+> **Project status:** Release candidate (`0.1.0-rc.1`). `validate`, `run`, the systemd unit, and the DEB and RPM packages are implemented and tested in CI, but not yet proven in production. Behavior and file formats may still change before 0.1.0.
 
 ## Overview
 
@@ -23,7 +23,7 @@ The controller manages GRE interfaces and their overlay IP addresses. It does no
 ## Requirements
 
 - Linux 5.18 or later, with kernel support for GRE and/or IPv6 GRE. The controller relies on the address protocol attribute (`IFA_PROTO`) added in 5.18 to recognize its own addresses.
-- Ubuntu or Fedora (supported release versions will be documented after testing).
+- Ubuntu or Fedora. Supported release versions are not fixed yet: the packages are built on Ubuntu 22.04 and tested on Ubuntu 22.04 (x86-64 and ARM64) and Fedora 44. Whatever the distribution, check that the running kernel is 5.18 or later (`uname -r`).
 - Network administration privileges for running the controller.
 - Reachable underlay endpoints and working name resolution when DNS names are used.
 
@@ -31,41 +31,41 @@ Other network management software must not manage the same GRE interfaces. Confi
 
 ## Installation
 
-> [!NOTE]
-> No releases or packages have been published yet. This section describes the planned installation.
+Download the package or archive for your distribution and architecture (x86-64 or ARM64) from [GitHub Releases](https://github.com/chaya2z/gre-controller/releases), together with `SHA256SUMS`, and check it:
 
-The intended distribution channel is GitHub Releases, with DEB and RPM packages and standalone binary archives for x86-64 and ARM64.
+```sh
+sha256sum --ignore-missing -c SHA256SUMS
+```
 
-Once releases are available, download the package matching your distribution and architecture. The examples below use the planned initial version and filenames.
+The examples below use the first release candidate, `0.1.0-rc.1`. Package versions write the prerelease part with `~` (`0.1.0~rc.1`), so that package managers order it before the final `0.1.0`.
 
 ### Ubuntu
 
 ```sh
-sudo apt install ./gre-controller_0.1.0_amd64.deb
+sudo apt install ./gre-controller_0.1.0~rc.1_amd64.deb
 ```
 
 ### Fedora
 
 ```sh
-sudo dnf install ./gre-controller-0.1.0-1.x86_64.rpm
+sudo dnf install ./gre-controller-0.1.0~rc.1-1.x86_64.rpm
 ```
 
 The packages install the executable, a systemd unit, and an initial configuration file. The service is not started automatically on first installation. An APT or DNF repository is not required; install newer release packages using the same package manager. Upgrading restarts a running service; existing tunnels stay up. Removing the package stops and disables the service but leaves the managed GRE interfaces in place; delete them with `ip link delete` if they are no longer needed.
 
 ### Binary archive
 
-The archive `gre-controller-0.1.0-x86_64-linux-gnu.tar.gz` (or `-aarch64-`) contains the executable, the systemd unit, and the initial configuration. The executable links glibc dynamically. Install it manually:
+The archive `gre-controller-0.1.0-rc.1-x86_64-linux-gnu.tar.gz` (or `-aarch64-`) contains the executable, the systemd unit, the initial configuration, and the license files. The executable links glibc dynamically. Install it manually:
 
 ```sh
-tar -xzf gre-controller-0.1.0-x86_64-linux-gnu.tar.gz
-cd gre-controller-0.1.0
+tar -xzf gre-controller-0.1.0-rc.1-x86_64-linux-gnu.tar.gz
+cd gre-controller-0.1.0-rc.1
 sudo install -m 0755 gre-controller /usr/bin/
 sudo install -m 0644 gre-controller.service /etc/systemd/system/
 sudo install -D -m 0644 config.toml /etc/gre-controller/config.toml
 sudo systemctl daemon-reload
 ```
 
-Each release lists the SHA-256 checksums of its files in `SHA256SUMS`.
 
 ## Configuration
 
@@ -108,9 +108,6 @@ The controller re-reads the configuration during reconciliation. To remove a tun
 **Warning:** Removing a tunnel definition deletes its managed GRE interface and can interrupt dependent traffic or BGP sessions. A missing, blank, or invalid configuration file does not trigger deletion. Replace configuration files atomically when updating a running service.
 
 ## Usage
-
-> [!NOTE]
-> `validate` and `run` are implemented. The systemd service is not yet implemented.
 
 Validate the configuration before starting the service:
 
@@ -158,3 +155,7 @@ An existing GRE interface does not imply that the remote endpoint is reachable o
 ## Design
 
 See [Design and reconciliation](docs/design.md) for the management model, DNS behavior, ownership, failure handling, and service lifecycle.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
