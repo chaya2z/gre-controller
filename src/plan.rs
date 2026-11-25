@@ -76,6 +76,12 @@ impl ObservedLink {
         self.owned_gre().is_ok()
     }
 
+    /// The underlay family and current endpoints, if this controller owns the interface.
+    #[must_use]
+    pub fn owned_endpoints(&self) -> Option<(Family, Endpoints)> {
+        self.owned_gre().ok()
+    }
+
     fn owned_gre(&self) -> Result<(Family, Endpoints), Conflict> {
         if self.alias.as_deref() != Some(OWNER_ALIAS) {
             return Err(Conflict::NotMarked);
