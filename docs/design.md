@@ -77,7 +77,7 @@ An unchanged configuration and unchanged resolved addresses must not cause redun
 
 ## Endpoint resolution
 
-Both endpoints accept literal addresses or DNS names. Literal addresses are used without DNS resolution. Names are resolved using the host's name resolution facilities. Only results matching the declared underlay family are eligible; duplicate results are treated as a single address.
+Both endpoints accept literal addresses or DNS names. Literal addresses are used without DNS resolution. Names are resolved using the host's name resolution facilities. Only results matching the declared underlay family are eligible; duplicate results are treated as a single address. Unspecified addresses in the results are ignored. Each name is looked up once per pass, even if several tunnels use it.
 
 The local endpoint must be assigned to the host. When multiple eligible addresses are returned, retain the currently configured endpoint if it is still eligible. Otherwise, select a candidate only if it is unique. Do not switch arbitrarily between multiple candidates. An unresolved or ambiguous endpoint prevents changes to the affected tunnel for that pass; an existing tunnel is retained and a missing tunnel is not created.
 
