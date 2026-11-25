@@ -15,7 +15,7 @@ async fn observes_loopback() {
     assert_eq!(lo.kind, LinkKind::Other(String::new()));
     assert!(lo.up);
     assert!(
-        lo.addresses.iter().any(|a| a.addr().is_loopback()),
+        lo.addresses.iter().any(|a| a.net.addr().is_loopback()),
         "{lo:?}"
     );
     assert!(

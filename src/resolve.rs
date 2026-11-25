@@ -351,6 +351,7 @@ mod tests {
 
     fn owned(kind: LinkKind) -> ObservedLink {
         ObservedLink {
+            index: 7,
             kind,
             alias: Some(OWNER_ALIAS.to_owned()),
             addresses: Vec::new(),

@@ -87,18 +87,20 @@ Resolution is retried periodically, including for tunnels whose configuration ha
 
 The controller identifies its own GRE interfaces using an explicit Linux interface alias (`gre-controller`) and checks the interface kind (`gre` or `ip6gre`). A matching name alone is not ownership. Pre-existing interfaces without the controller's ownership marker are never adopted automatically. The marker is an ownership convention, not an access-control boundary.
 
+Linux does not apply the alias when it creates an interface, so a new interface is created DOWN and marked in a second request. If marking fails, the controller deletes the new interface again. If the process stops between the two requests, an unmarked interface with the tunnel's name remains; later passes report it as a conflict, and it has to be deleted manually.
+
 | Change | Expected behavior |
 | --- | --- |
 | Local or remote endpoint | Update the existing interface in place where supported |
-| Overlay address set | Add and remove addresses to match the declared set |
+| Overlay address set | Add missing declared addresses; remove undeclared addresses the controller added |
 | Underlay family | Requires an intentional interface replacement |
 | Interface name | A new definition and removal of the old definition |
 | Removed definition | Delete the owned interface |
 | MTU or other unmanaged attributes | Do not intentionally reconcile them |
 
-Endpoint updates should preserve interface identity (ifindex) and overlay addresses. If an in-place operation fails, do not silently fall back to deleting and recreating the interface. A deliberate family change is different: validate the new definition and resolve its endpoints before attempting replacement, and report any failure. Network interruption is possible during replacement or endpoint changes.
+Endpoint updates should preserve interface identity (ifindex) and overlay addresses. They must also not change settings the controller does not manage, such as the MTU, TTL or hop limit, and GRE keys: an endpoint change sends the current MTU and every writable tunnel parameter as the kernel reports it, with only the local and remote addresses replaced. If the current settings cannot be read, the endpoints are not changed. If an in-place operation fails, do not silently fall back to deleting and recreating the interface. A deliberate family change is different: validate the new definition and resolve its endpoints before attempting replacement, and report any failure. Network interruption is possible during replacement or endpoint changes.
 
-The declared overlay address set is authoritative for controller-managed interfaces. Preserve kernel-generated addresses such as automatically configured IPv6 link-local addresses unless explicitly managed by the configuration. Undeclared IPv6 link-local addresses (`fe80::/10`) are never removed, so a link-local address that is removed from the configuration also remains on the interface. Do not modify addresses on unrelated interfaces.
+The controller marks every address it adds with the address protocol (`IFA_PROTO`) value `47`, chosen after the GRE IP protocol number. On a controller-managed interface, an address is removed only if it carries this value and is no longer declared. Addresses without it are left alone: kernel-generated addresses such as automatically configured IPv6 link-local addresses (`IFAPROT_KERNEL_LL`), and addresses added by other tools. They are also never adopted: a declared address that already exists without the marker counts as present, keeps its protocol, and is not removed when it is later undeclared. Addresses are added with `NLM_F_EXCL`, never replaced, so that an existing address is not re-marked. Replacing a controller address with other tools (for example `ip address replace`) clears its marker, and the controller stops managing it. Do not modify addresses on unrelated interfaces.
 
 Kernel operations are not a multi-operation transaction. Validate inputs before making changes, verify operation results, report partial failures, and retry convergence. Do not promise atomic updates, rollback, or uninterrupted traffic.
 
