@@ -50,7 +50,22 @@ sudo apt install ./gre-controller_0.1.0_amd64.deb
 sudo dnf install ./gre-controller-0.1.0-1.x86_64.rpm
 ```
 
-The packages install the executable, a systemd unit, and an initial configuration file. The service is not started automatically on first installation. An APT or DNF repository is not required; install newer release packages using the same package manager.
+The packages install the executable, a systemd unit, and an initial configuration file. The service is not started automatically on first installation. An APT or DNF repository is not required; install newer release packages using the same package manager. Upgrading restarts a running service; existing tunnels stay up. Removing the package stops and disables the service but leaves the managed GRE interfaces in place; delete them with `ip link delete` if they are no longer needed.
+
+### Binary archive
+
+The archive `gre-controller-0.1.0-x86_64-linux-gnu.tar.gz` (or `-aarch64-`) contains the executable, the systemd unit, and the initial configuration. The executable links glibc dynamically. Install it manually:
+
+```sh
+tar -xzf gre-controller-0.1.0-x86_64-linux-gnu.tar.gz
+cd gre-controller-0.1.0
+sudo install -m 0755 gre-controller /usr/bin/
+sudo install -m 0644 gre-controller.service /etc/systemd/system/
+sudo install -D -m 0644 config.toml /etc/gre-controller/config.toml
+sudo systemctl daemon-reload
+```
+
+Each release lists the SHA-256 checksums of its files in `SHA256SUMS`.
 
 ## Configuration
 

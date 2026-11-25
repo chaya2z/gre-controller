@@ -48,3 +48,33 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
       - run: scripts/systemd-test.sh
+
+  packages:
+    # Builds the release archive and packages as the release workflow does, then
+    # installs, upgrades, and removes them.
+    strategy:
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - run: scripts/install-nfpm.sh
+      - run: scripts/build-packages.sh
+      - run: scripts/package-test.sh
+
+  msrv:
+    # The minimum supported Rust version declared in Cargo.toml (rust-version).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          rustup toolchain install "$msrv" --profile minimal
+          rustup default "$msrv"
+      - run: cargo test --locked
