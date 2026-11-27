@@ -137,8 +137,16 @@ async fn update(
     Ok(())
 }
 
+/// Default IPv6 tunnel hop limit for routers, as specified in RFC 2473, Section 6.3:
+/// the default IPv6 hop limit from the Assigned Numbers RFC (RFC 1700).
+///
+/// A new `ip6gre` interface gets this value; the hop limit is not managed after
+/// creation.
+const DEFAULT_IPV6_GRE_HOP_LIMIT: u8 = 64;
+
 /// The link message that creates a tunnel. Every GRE parameter that is not sent gets
-/// the kernel's default.
+/// the kernel's default, except the `ip6gre` hop limit, which is
+/// [`DEFAULT_IPV6_GRE_HOP_LIMIT`].
 fn tunnel(family: Family, endpoints: Endpoints, name: &InterfaceName) -> LinkMessage {
     match (family, endpoints.local, endpoints.remote) {
         (Family::Ipv4, IpAddr::V4(local), IpAddr::V4(remote)) => {
@@ -153,6 +161,7 @@ fn tunnel(family: Family, endpoints: Endpoints, name: &InterfaceName) -> LinkMes
                 .name(name.as_str())
                 .local(local)
                 .remote(remote)
+                .ttl(DEFAULT_IPV6_GRE_HOP_LIMIT)
                 .build()
         }
         // `resolve` guarantees that both endpoints match the family.

@@ -273,6 +273,8 @@ async fn creates_tunnels_and_converges() {
     let snapshot = snapshot().await;
     assert_matches(&snapshot, "ap-v4", &v4);
     assert_matches(&snapshot, "ap-v6", &v6);
+    let (hop_limit, _, _) = ttl_and_keys(&snapshot.tunnel_settings[&name("ap-v6")]);
+    assert_eq!(hop_limit, Some(64));
 
     // A second pass has nothing to do.
     let decisions = reconcile(&[("ap-v4", &v4), ("ap-v6", &v6)]).await;
